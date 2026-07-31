@@ -1,0 +1,141 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 智能客服</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; height: 100vh; display: flex; flex-direction: column; }
+
+    .header { background: #1677ff; color: white; padding: 16px 20px; font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+    .header .dot { width: 8px; height: 8px; background: #52c41a; border-radius: 50%; }
+
+    .settings { background: white; padding: 12px 20px; display: flex; gap: 16px; border-bottom: 1px solid #e8e8e8; font-size: 13px; color: #666; }
+    .settings label { display: flex; align-items: center; gap: 6px; }
+    .settings input { border: 1px solid #d9d9d9; border-radius: 4px; padding: 4px 8px; font-size: 13px; width: 200px; }
+
+    .chat-container { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+
+    .message { display: flex; gap: 10px; max-width: 80%; }
+    .message.user { align-self: flex-end; flex-direction: row-reverse; }
+    .message.ai { align-self: flex-start; }
+
+    .avatar { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+    .message.user .avatar { background: #1677ff; color: white; }
+    .message.ai .avatar { background: #52c41a; color: white; }
+
+    .bubble { padding: 12px 16px; border-radius: 12px; font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+    .message.user .bubble { background: #1677ff; color: white; border-bottom-right-radius: 4px; }
+    .message.ai .bubble { background: white; color: #333; border-bottom-left-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
+
+    .typing { display: inline-block; }
+    .typing::after { content: ''; animation: blink 1s infinite; }
+    @keyframes blink { 0%, 100% { content: ''; } 50% { content: '...'; } }
+
+    .input-area { background: white; padding: 16px 20px; border-top: 1px solid #e8e8e8; display: flex; gap: 12px; }
+    .input-area input { flex: 1; border: 1px solid #d9d9d9; border-radius: 8px; padding: 10px 16px; font-size: 14px; outline: none; }
+    .input-area input:focus { border-color: #1677ff; }
+    .input-area button { background: #1677ff; color: white; border: none; border-radius: 8px; padding: 10px 24px; font-size: 14px; cursor: pointer; }
+    .input-area button:hover { background: #4096ff; }
+    .input-area button:disabled { background: #d9d9d9; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <span class="dot"></span>
+    AI 智能客服
+  </div>
+
+  <div class="settings">
+    <label>用户ID: <input id="userId" value="user001" /></label>
+    <label>会话ID: <input id="sessionId" value="session001" /></label>
+  </div>
+
+  <div class="chat-container" id="chat"></div>
+
+  <div class="input-area">
+    <input id="input" placeholder="输入你的问题..." autofocus />
+    <button id="sendBtn" onclick="send()">发送</button>
+  </div>
+
+  <script>
+    const chat = document.getElementById('chat');
+    const input = document.getElementById('input');
+    const sendBtn = document.getElementById('sendBtn');
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        send();
+      }
+    });
+
+    function addMessage(role, text) {
+      const div = document.createElement('div');
+      div.className = 'message ' + role;
+      const avatar = role === 'user' ? '我' : 'AI';
+      div.innerHTML = '<div class="avatar">' + avatar + '</div><div class="bubble">' + text + '</div>';
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+      return div.querySelector('.bubble');
+    }
+
+    async function send() {
+      const content = input.value.trim();
+      if (!content) return;
+      console.log('发送content', content);
+
+      const userId = document.getElementById('userId').value;
+      const sessionId = document.getElementById('sessionId').value;
+
+      addMessage('user', content);
+      input.value = '';
+      sendBtn.disabled = true;
+
+      const aiBubble = addMessage('ai', '');
+      aiBubble.classList.add('typing');
+
+      try {
+        const response = await fetch('http://localhost:3001/ai/rag-chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: userId, sessionId: sessionId, content: content }),
+        });
+        console.log(response);
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let fullText = '';
+
+        while (true) {
+          const result = await reader.read();
+          // console.log(result);
+          if (result.done) break;
+
+          const chunk = decoder.decode(result.value, { stream: true });
+          const lines = chunk.split('\n');
+          console.log(lines);
+
+          for (var i = 0; i < lines.length; i++) {
+            if (lines[i].indexOf('data: ') === 0) {
+              var data = lines[i].slice(6);
+              if (data === '[DONE]') break;
+              fullText += data;
+              aiBubble.textContent = fullText;
+              aiBubble.classList.remove('typing');
+              chat.scrollTop = chat.scrollHeight;
+            }
+          }
+        }
+      } catch (err) {
+        aiBubble.textContent = '连接失败: ' + err.message;
+        aiBubble.classList.remove('typing');
+      }
+
+      sendBtn.disabled = false;
+      input.focus();
+    }
+  </script>
+</body>
+</html>

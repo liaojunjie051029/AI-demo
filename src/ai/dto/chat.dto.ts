@@ -19,3 +19,32 @@ export class ChatWithContextDto {
   @MinLength(1)
   content!: string;
 }
+
+export class memoryDto {
+  @ApiProperty({ example: 'user001' })
+  @IsString()
+  @MinLength(1)
+  userId!: string;
+
+  @ApiProperty({ example: 'text1' })
+  @IsString()
+  @MinLength(1)
+  sessionId!: string;
+}
+
+export class ragDto {
+  @ApiProperty({ example: 'user001' })
+  @IsString()
+  @MinLength(1)
+  userId!: string;
+
+  @ApiProperty({ example: 'text1' })
+  @IsString()
+  @MinLength(1)
+  sessionId!: string;
+
+  @ApiProperty({ example: '你好，介绍一下你自己' })
+  @IsString()
+  @MinLength(1)
+  content!: string;
+}

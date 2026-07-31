@@ -14,9 +14,20 @@ datasource db {
 model Message {
   id        String   @id @default(uuid())
   sessionId String
+  userId    String?
   role      String
   content   String
   createdAt DateTime @default(now())
 
   @@index([sessionId])
+  @@index([userId])
+}
+
+model UserProfile {
+  id        String   @id @default(uuid())
+  userId    String   @unique        // 用户ID
+  name      String?                 // 姓名
+  preferences String? @db.Text      // 用户偏好（JSON 格式存储）
+  memories    String? @db.Text      // AI 提取的重要记忆（JSON 格式）
+  updatedAt DateTime @updatedAt     // 最后更新时间
 }
