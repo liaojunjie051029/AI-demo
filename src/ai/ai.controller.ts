@@ -125,4 +125,16 @@ export class AiController {
       },
     });
   }
+
+  @Post('chat-mcp')
+  @ApiOperation({ summary: 'MCP 文件管理对话' })
+  chatMCP(@Body() dto: ChatDto) {
+    return this.aiService.chatWithMCP(dto.content);
+  }
+
+  @Post('chat-search')
+  @ApiOperation({ summary: '搜索对话' })
+  chatSearch(@Body() dto: ChatDto) {
+    return this.aiService.chatWithSearch(dto.content);
+  }
 }

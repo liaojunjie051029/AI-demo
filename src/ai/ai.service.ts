@@ -4,6 +4,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { Observable, Subscriber } from 'rxjs';
 import { UserProfile } from '@prisma/client';
 import { KnowledgeService } from '../knowledge/knowledge.service';
+import { tools, executeTool } from './tools';
+import { createFilesystemMCP, createSearchMCP, convertMCPTools } from './mcp-client';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 
 export interface ExtractedMemory {
   name?: string;
@@ -21,6 +24,8 @@ export interface Vector {
 export class AiService {
   private client: OpenAI;
   private model: string;
+  private mcpClient!: Client;
+  private searchMcpClient: Client; // 搜索客户端
 
   constructor(
     private prisma: PrismaService,
@@ -33,7 +38,15 @@ export class AiService {
     this.model = process.env.LLM_MODEL || 'qwen3.7-flash-2026-07-15';
   }
 
-  onModuleInit() {
+  async onModuleInit() {
+    try {
+      this.mcpClient = await createFilesystemMCP();
+
+      // 初始化搜索 MCP
+      this.searchMcpClient = await createSearchMCP();
+    } catch (error) {
+      console.error('MCP 连接失败:', error);
+    }
     // const res = await this.getUserInfo('user001');
     // const res = await this.gethistory('text1');
     // const res = await this.saveusermessage('哈喽', 'text2');
@@ -44,6 +57,9 @@ export class AiService {
     //   '\n',
     // );
     // this.ragChat('user001', 'text1', '我要退货');
+    const res = await this.chatWithTools('今天是几号');
+    // const res = await this.chatWithMCP('test-mcp.txt 里写了什么');
+    console.log(res);
   }
 
   async chatbyresponse() {
@@ -435,5 +451,185 @@ export class AiService {
       .map((m, i) => `[资料${i + 1}]${m.title}： ${m.content}`)
       .join('\n\n');
     return context;
+  }
+
+  // Function Calling 对话
+  async chatWithTools(content: string): Promise<string> {
+    // 第一步：发消息 + 工具列表给 AI
+    const messages: any[] = [
+      {
+        role: 'system',
+        content: '你是一个智能助手，可以根据需要调用工具来回答用户问题。',
+      },
+      { role: 'user', content: content },
+    ];
+
+    const response = await this.client.chat.completions.create({
+      model: this.model,
+      messages: messages as any[],
+      tools: tools,
+    });
+
+    const aiMessage = response.choices[0].message;
+    console.log('AI 回复:', aiMessage);
+
+    // 第二步：判断 AI 是否要调用工具
+    if (aiMessage.tool_calls) {
+      // AI 要调工具！
+      // 把 AI 的回复（tool_calls）也加入消息历史
+      messages.push(aiMessage);
+
+      // 第三步：逐个执行 AI 要求的工具
+      for (const toolCall of aiMessage.tool_calls) {
+        if (toolCall.type === 'function') {
+          console.log(`AI 要调用工具: ${toolCall.function}`);
+          const functionName = toolCall.function.name;
+          const functionArgs = JSON.parse(toolCall.function.arguments);
+
+          console.log(`AI 要调用: ${functionName}`, functionArgs);
+
+          const result = await executeTool(functionName, functionArgs);
+          console.log(`工具 ${functionName} 的结果:`, result);
+
+          messages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            content: JSON.stringify(result),
+          });
+        }
+      }
+      console.log('更新后的消息历史:', messages);
+
+      // 第五步：AI 根据工具结果组织语言回复
+      const finalResponse = await this.client.chat.completions.create({
+        model: this.model,
+        messages: messages,
+      });
+
+      return finalResponse.choices[0].message.content || '';
+    } else {
+      // AI 不需要调工具，直接回复
+      return aiMessage.content || '';
+    }
+  }
+
+  // MCP 对话方法
+  async chatWithMCP(content: string): Promise<string> {
+    // 1. 从 MCP Server 获取工具列表
+    const mcpTools = await this.mcpClient.listTools();
+    const openaiTools = convertMCPTools(mcpTools.tools);
+
+    const messages: any[] = [
+      {
+        role: 'system',
+        content:
+          '你是一个文件管理助手，可以帮助用户查看、创建、编辑文件。操作目录限定在 C:\\text\\智能体模块demo\\agent-learning 下。',
+      },
+      { role: 'user', content: content },
+    ];
+
+    // 2. 发给 AI
+    const response = await this.client.chat.completions.create({
+      model: this.model,
+      messages,
+      tools: openaiTools,
+    });
+
+    const aiMessage = response.choices[0].message;
+
+    // 3. 判断是否要调工具
+    if (aiMessage.tool_calls) {
+      messages.push(aiMessage);
+
+      for (const toolCall of aiMessage.tool_calls) {
+        if (toolCall.type === 'function') {
+          const functionName = toolCall.function.name;
+          const functionArgs = JSON.parse(toolCall.function.arguments);
+
+          console.log(`MCP 调用: ${functionName}`, functionArgs);
+
+          // 4. 通过 MCP Client 调用 MCP Server
+          const result = await this.mcpClient.callTool({
+            name: functionName,
+            arguments: functionArgs,
+          });
+
+          messages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            content: JSON.stringify(result.content),
+          });
+        }
+      }
+
+      // 5. AI 根据结果回复
+      const finalResponse = await this.client.chat.completions.create({
+        model: this.model,
+        messages,
+      });
+      return finalResponse.choices[0].message.content || '';
+    }
+
+    return aiMessage.content || '';
+  }
+
+  // src/ai/ai.service.ts
+  async chatWithSearch(content: string): Promise<string> {
+    // 1. 从搜索 MCP Server 获取工具列表
+    const mcpTools = await this.searchMcpClient.listTools();
+    const openaiTools = convertMCPTools(mcpTools.tools);
+    const allTools = [...tools, ...openaiTools];
+
+    const messages: any[] = [
+      {
+        role: 'system',
+        content: '你是一个搜索助手，可以帮助用户搜索网络信息。',
+      },
+      { role: 'user', content: content },
+    ];
+
+    // 2. 发给 AI，附带搜索工具
+    const response = await this.client.chat.completions.create({
+      model: this.model,
+      messages,
+      tools: allTools,
+    });
+
+    const aiMessage = response.choices[0].message;
+
+    // 3. 判断是否要调工具
+    if (aiMessage.tool_calls) {
+      messages.push(aiMessage);
+
+      for (const toolCall of aiMessage.tool_calls) {
+        if (toolCall.type === 'function') {
+          const functionName = toolCall.function.name;
+          const functionArgs = JSON.parse(toolCall.function.arguments);
+
+          console.log(`搜索 MCP 调用: ${functionName}`, functionArgs);
+
+          // 4. 通过搜索 MCP Client 调用工具
+          const result = await this.searchMcpClient.callTool({
+            name: functionName,
+            arguments: functionArgs,
+          });
+
+          messages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            content: JSON.stringify(result.content),
+          });
+        }
+      }
+
+      // 5. AI 根据搜索结果回复
+      const finalResponse = await this.client.chat.completions.create({
+        model: this.model,
+        messages,
+      });
+      return finalResponse.choices[0].message.content || '';
+    }
+
+    return aiMessage.content || '';
   }
 }
