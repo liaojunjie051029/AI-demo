@@ -54,6 +54,30 @@ export async function createSearchMCP() {
   return client;
 }
 
+export async function createBaiduSearchMCP() {
+  const transport = new StdioClientTransport({
+    command: 'npx',
+    args: [
+      'baidu-search-mcp',
+      '--max-result=5',
+      '--fetch-content-count=2',
+      '--max-content-length=2000',
+    ],
+  });
+
+  const client = new Client({
+    name: 'my-baidu-search-agent',
+    version: '1.0.0',
+  });
+  await client.connect(transport);
+
+  const tools = await client.listTools();
+  console.log(
+    '百度搜索 MCP 工具:',
+    tools.tools.map((t: any) => t.name),
+  );
+  return client;
+}
 // 把 MCP 工具转成 OpenAI Function Calling 格式
 export function convertMCPTools(mcpTools: any[]) {
   return mcpTools.map((tool) => ({

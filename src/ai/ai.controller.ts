@@ -137,4 +137,10 @@ export class AiController {
   chatSearch(@Body() dto: ChatDto) {
     return this.aiService.chatWithSearch(dto.content);
   }
+
+  @Post('chat-baidu')
+  @ApiOperation({ summary: '百度搜索对话' })
+  chatBaidu(@Body() dto: ChatDto) {
+    return this.aiService.chatWithBaidu(dto.content);
+  }
 }

@@ -5,7 +5,12 @@ import { Observable, Subscriber } from 'rxjs';
 import { UserProfile } from '@prisma/client';
 import { KnowledgeService } from '../knowledge/knowledge.service';
 import { tools, executeTool } from './tools';
-import { createFilesystemMCP, createSearchMCP, convertMCPTools } from './mcp-client';
+import {
+  createFilesystemMCP,
+  createSearchMCP,
+  convertMCPTools,
+  createBaiduSearchMCP,
+} from './mcp-client';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 
 export interface ExtractedMemory {
@@ -25,7 +30,8 @@ export class AiService {
   private client: OpenAI;
   private model: string;
   private mcpClient!: Client;
-  private searchMcpClient: Client; // 搜索客户端
+  private searchMcpClient!: Client; // 搜索客户端
+  private baiduMcpClient!: Client; // 百度搜索客户端
 
   constructor(
     private prisma: PrismaService,
@@ -44,6 +50,10 @@ export class AiService {
 
       // 初始化搜索 MCP
       this.searchMcpClient = await createSearchMCP();
+
+      // 初始化百度搜索 MCP
+      this.baiduMcpClient = await createBaiduSearchMCP();
+      console.log('本地工具列表:', tools);
     } catch (error) {
       console.error('MCP 连接失败:', error);
     }
@@ -57,9 +67,9 @@ export class AiService {
     //   '\n',
     // );
     // this.ragChat('user001', 'text1', '我要退货');
-    const res = await this.chatWithTools('今天是几号');
+    // const res = await this.chatWithTools('今天是几号');
     // const res = await this.chatWithMCP('test-mcp.txt 里写了什么');
-    console.log(res);
+    // console.log(res);
   }
 
   async chatbyresponse() {
@@ -631,5 +641,139 @@ export class AiService {
     }
 
     return aiMessage.content || '';
+  }
+
+  // baidu搜索 MCP 对话方法
+  // src/ai/ai.service.ts
+  async chatWithBaidu(content: string): Promise<string> {
+    console.log('chatWithBaidu called with content:', content);
+    // 1. 从百度搜索 MCP Server 获取工具列表
+    const mcpTools = await this.baiduMcpClient.listTools();
+    const openaiTools = convertMCPTools(mcpTools.tools);
+    console.log('百度搜索 MCP 工具列表:', openaiTools);
+    const mcpTools1 = await this.mcpClient.listTools();
+    const openaiTools1 = convertMCPTools(mcpTools1.tools);
+    console.log(' 操作文件 MCP 工具列表:', openaiTools1);
+
+    console.log('本地工具列表:', tools);
+
+    const messages: any[] = [
+      {
+        role: 'system',
+        content: `
+你是一个智能助手，可以调用工具完成复杂任务。
+首先你需要判断这个问题是不是复杂任务，如果是复杂任务要拆分成多少步，每一步要干什么。
+如果用户的问题里面设计今年今天，这个月，明年，明天，昨天等时间相关的词语，首先你要调用local_get_current_time工具获取当前时间。
+可用工具：
+- baidu_search：搜索网络信息
+- write_file：写入文件（路径相对于 C:\\text\\智能体模块demo\\agent-learning）
+- local_get_current_time：获取当前时间
+
+规则：
+1. 如果用户要求"搜索并保存"，请先调用 baidu_search 获取信息，再根据搜索结果调用 write_file 保存。
+2. 每一步只调用必要的工具，等待结果后再决定下一步。
+      `,
+      },
+      { role: 'user', content: content },
+    ];
+
+    // 2. 发给 AI，附带搜索工具
+    let response = await this.client.chat.completions.create({
+      model: this.model,
+      messages,
+      tools: [...tools, ...openaiTools, ...openaiTools1],
+      parallel_tool_calls: true, // 允许并行调用（如果条件允许）
+    });
+
+    let aiMessage = response.choices[0].message;
+    console.log('AI 回复:', aiMessage, '工具调用:', aiMessage.tool_calls);
+
+    // 4. 循环：只要 AI 返回了 tool_calls，就执行并继续
+    let maxIterations = 10; // 安全保护，防止死循环
+
+    // 3. 判断是否要调工具
+    while (aiMessage.tool_calls && maxIterations > 0) {
+      maxIterations--;
+
+      console.log(`\n--- 第 ${10 - maxIterations} 轮工具调用 ---`);
+      console.log(
+        'AI 要调用的工具:',
+        aiMessage.tool_calls.map((t) => t),
+      );
+
+      messages.push(aiMessage);
+
+      for (const toolCall of aiMessage.tool_calls) {
+        if (toolCall.type === 'function') {
+          const functionName = toolCall.function.name;
+          const functionArgs = JSON.parse(toolCall.function.arguments);
+
+          console.log(`正要使用方法和参数: ${functionName}`, functionArgs);
+
+          let result;
+
+          // 6. 根据工具来源执行
+          if (functionName.includes('local')) {
+            // 如果是本地工具，直接调用本地工具
+            result = await executeTool(functionName, functionArgs);
+            console.log(
+              `本地工具 ${functionName} 的结果:`,
+              result,
+              typeof result,
+            );
+            result = { content: result }; // 包装成 { content: ... } 形式，方便后续处理
+          } else if (
+            functionName === 'baidu_search' ||
+            functionName === 'fetch_url'
+          ) {
+            // 百度搜索 MCP
+            result = await this.baiduMcpClient.callTool({
+              name: functionName,
+              arguments: functionArgs,
+            });
+            // 提取文本内容
+            // const textContent = mcpResult.content
+            //   .filter((item: any) => item.type === 'text')
+            //   .map((item: any) => item.text)
+            //   .join('\n');
+            // result = { content: textContent };
+          } else {
+            // 文件系统 MCP（或其他）
+            result = await this.mcpClient.callTool({
+              name: functionName,
+              arguments: functionArgs,
+            });
+            // const textContent = mcpResult.content
+            //   .filter((item: any) => item.type === 'text')
+            //   .map((item: any) => item.text)
+            //   .join('\n');
+            // result = { content: textContent };
+          }
+
+          messages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            content: JSON.stringify(result.content),
+          });
+        }
+      }
+
+      // 5. AI 根据搜索结果回复
+      response = await this.client.chat.completions.create({
+        model: this.model,
+        messages,
+        tools: [...tools, ...openaiTools, ...openaiTools1],
+        parallel_tool_calls: true,
+      });
+
+      aiMessage = response.choices[0].message;
+    }
+
+    // 9. 循环结束，返回最终答案
+    if (aiMessage.content) {
+      return aiMessage.content;
+    } else {
+      return '任务已完成，但 AI 没有返回文本内容。';
+    }
   }
 }

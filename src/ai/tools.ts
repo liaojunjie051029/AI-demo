@@ -26,7 +26,7 @@ export const tools = [
   {
     type: 'function' as const,
     function: {
-      name: 'get_user_info',
+      name: 'local_get_user_info',
       description: '获取用户信息',
       strict: true,
       parameters: {
@@ -44,7 +44,7 @@ export const tools = [
   {
     type: 'function' as const,
     function: {
-      name: 'get_current_time',
+      name: 'local_get_current_time',
       description: '获取当前时间',
       strict: true,
       parameters: {
@@ -58,19 +58,19 @@ export const tools = [
 // 工具的执行函数（AI 说要调这个工具时，你真正执行的代码）
 export function executeTool(name: string, args: Record<string, string>) {
   switch (name) {
-    case 'get_weather':
-      // 模拟查询天气（实际项目里调真实 API）
-      return {
-        city: args.city,
-        temperature: '25°C',
-        weather: '晴天',
-        humidity: '45%',
-      };
-    case 'get_user_info':
+    // case 'local_get_weather':
+    //   // 模拟查询天气（实际项目里调真实 API）
+    //   return {
+    //     city: args.city,
+    //     temperature: '25°C',
+    //     weather: '晴天',
+    //     humidity: '45%',
+    //   };
+    case 'local_get_user_info':
       return prisma.userProfile.findUnique({
         where: { userId: args.userId },
       });
-    case 'get_current_time':
+    case 'local_get_current_time':
       return {
         date: new Date().toLocaleDateString('zh-CN'),
         time: new Date().toLocaleTimeString('zh-CN'),
