@@ -661,17 +661,17 @@ export class AiService {
       {
         role: 'system',
         content: `
-你是一个智能助手，可以调用工具完成复杂任务。
-首先你需要判断这个问题是不是复杂任务，如果是复杂任务要拆分成多少步，每一步要干什么。
-如果用户的问题里面设计今年今天，这个月，明年，明天，昨天等时间相关的词语，首先你要调用local_get_current_time工具获取当前时间。
-可用工具：
-- baidu_search：搜索网络信息
-- write_file：写入文件（路径相对于 C:\\text\\智能体模块demo\\agent-learning）
-- local_get_current_time：获取当前时间
+        你是一个智能助手，可以调用工具完成复杂任务。
+        首先你需要判断这个问题是不是复杂任务，如果是复杂任务要拆分成多少步，每一步要干什么。
+        如果用户的问题里面设计今年今天，这个月，明年，明天，昨天等时间相关的词语，首先你要调用local_get_current_time工具获取当前时间。
+        可用工具：
+        - baidu_search：搜索网络信息
+        - write_file：写入文件（路径相对于 C:\\text\\智能体模块demo\\agent-learning）
+        - local_get_current_time：获取当前时间
 
-规则：
-1. 如果用户要求"搜索并保存"，请先调用 baidu_search 获取信息，再根据搜索结果调用 write_file 保存。
-2. 每一步只调用必要的工具，等待结果后再决定下一步。
+        规则：
+        1. 如果用户要求"搜索并保存"，请先调用 baidu_search 获取信息，再根据搜索结果调用 write_file 保存。
+        2. 每一步只调用必要的工具，等待结果后再决定下一步。
       `,
       },
       { role: 'user', content: content },
