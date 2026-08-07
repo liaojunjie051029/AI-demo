@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>智能客服测试</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; height: 100vh; display: flex; flex-direction: column; }
+
+    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 16px 20px; font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+    .header .dot { width: 8px; height: 8px; background: #52c41a; border-radius: 50%; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+    .settings { background: white; padding: 12px 20px; display: flex; gap: 16px; border-bottom: 1px solid #e8e8e8; font-size: 13px; color: #666; }
+    .settings label { display: flex; align-items: center; gap: 6px; }
+    .settings input { border: 1px solid #d9d9d9; border-radius: 4px; padding: 4px 8px; font-size: 13px; width: 150px; }
+
+    .chat-container { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+
+    .message { display: flex; gap: 10px; max-width: 85%; }
+    .message.user { align-self: flex-end; flex-direction: row-reverse; }
+    .message.ai { align-self: flex-start; }
+
+    .avatar { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+    .message.user .avatar { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+    .message.ai .avatar { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white; }
+
+    .bubble { padding: 12px 16px; border-radius: 12px; font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+    .message.user .bubble { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-bottom-right-radius: 4px; }
+    .message.ai .bubble { background: white; color: #333; border-bottom-left-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
+
+    .progress-text { color: #999; font-size: 12px; font-style: italic; }
+    .tool-call { color: #1890ff; font-size: 12px; background: #e6f7ff; padding: 4px 8px; border-radius: 4px; margin: 4px 0; }
+    .tool-result { color: #52c41a; font-size: 12px; background: #f6ffed; padding: 4px 8px; border-radius: 4px; margin: 4px 0; }
+
+    .typing { display: inline-block; }
+    .typing::after { content: '"''"'; animation: blink 1s infinite; }
+    @keyframes blink { 0%, 100% { content: '"''"'; } 50% { content: '...'; } }
+
+    .input-area { background: white; padding: 16px 20px; border-top: 1px solid #e8e8e8; display: flex; gap: 12px; }
+    .input-area input { flex: 1; border: 1px solid #d9d9d9; border-radius: 8px; padding: 10px 16px; font-size: 14px; outline: none; }
+    .input-area input:focus { border-color: #667eea; }
+    .input-area button { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; padding: 10px 24px; font-size: 14px; cursor: pointer; }
+    .input-area button:hover { opacity: 0.9; }
+    .input-area button:disabled { background: #d9d9d9; cursor: not-allowed; }
+
+    .log-panel { background: #1e1e1e; color: #d4d4d4; padding: 12px; font-family: monospace; font-size: 12px; max-height: 150px; overflow-y: auto; }
+    .log-panel .log-item { margin: 2px 0; }
+    .log-panel .log-progress { color: #dcdcaa; }
+    .log-panel .log-tool { color: #569cd6; }
+    .log-panel .log-content { color: #6a9955; }
+    .log-panel .log-error { color: #f44747; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <span class="dot"></span>
+    智能客服测试（带工具调用）
+  </div>
+
+  <div class="settings">
+    <label>用户ID: <input id="userId" value="user001" /></label>
+    <label>会话ID: <input id="sessionId" value="session001" /></label>
+    <label>接口地址: <input id="apiUrl" value="http://localhost:3001" /></label>
+  </div>
+
+  <div class="chat-container" id="chat"></div>
+
+  <div class="log-panel" id="logPanel">
+    <div class="log-item">[系统] 日志面板 - 显示工具调用过程</div>
+  </div>
+
+  <div class="input-area">
+    <input id="input" placeholder="输入你的问题..." autofocus />
+    <button id="sendBtn" onclick="send()">发送</button>
+  </div>
+
+  <script>
+    const chat = document.getElementById('chat');
+    const input = document.getElementById('input');
+    const sendBtn = document.getElementById('sendBtn');
+    const logPanel = document.getElementById('logPanel');
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        send();
+      }
+    });
+
+    function addLog(text, type = '"''"') {
+      const div = document.createElement('div');
+      div.className = 'log-item log-' + type;
+      div.textContent = `[${new Date().toLocaleTimeString()}] ${text}`;
+      logPanel.appendChild(div);
+      logPanel.scrollTop = logPanel.scrollHeight;
+    }
+
+    function addMessage(role, content, extra = '"''"') {
+      const div = document.createElement('div');
+      div.className = 'message ' + role;
+      const avatar = role === 'user' ? '我' : 'AI';
+      div.innerHTML = '<div class="avatar">' + avatar + '</div><div class="bubble">' + content + extra + '</div>';
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+      return div.querySelector('.bubble');
+    }
+
+    async function send() {
+      const content = input.value.trim();
+      if (!content) return;
+
+      const userId = document.getElementById('userId').value;
+      const sessionId = document.getElementById('sessionId').value;
+      const apiUrl = document.getElementById('apiUrl').value;
+
+      addMessage('user', content);
+      input.value = '"''"';
+      sendBtn.disabled = true;
+
+      const aiBubble = addMessage('ai', '<span class="typing">正在思考</span>');
+      let fullText = '"''"';
+      let toolHtml = '"''"';
+
+      addLog('发送请求: ' + content, 'progress');
+
+      try {
+        const response = await fetch(`${apiUrl}/ai/chat-smart`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId, sessionId, content }),
+        });
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+          const result = await reader.read();
+          if (result.done) break;
+
+          const chunk = decoder.decode(result.value, { stream: true });
+          const lines = chunk.split('\n');
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const jsonStr = line.slice(6);
+              
+              try {
+                const event = JSON.parse(jsonStr);
+                
+                switch (event.type) {
+                  case 'progress':
+                    addLog('进度: ' + event.text, 'progress');
+                    aiBubble.innerHTML = toolHtml + '<span class="progress-text">' + event.text + '</span><span class="typing"></span>';
+                    break;
+                    
+                  case 'tool':
+                    addLog('工具调用: ' + event.text, 'tool');
+                    toolHtml += '<div class="tool-call">🔧 ' + event.text + '</div>';
+                    aiBubble.innerHTML = toolHtml + '<span class="progress-text">执行中...</span><span class="typing"></span>';
+                    break;
+                    
+                  case 'tool_result':
+                    addLog('工具结果: ' + event.text, 'tool');
+                    toolHtml += '<div class="tool-result">✅ ' + event.text + '</div>';
+                    aiBubble.innerHTML = toolHtml + '<span class="progress-text">分析结果...</span><span class="typing"></span>';
+                    break;
+                    
+                  case 'content':
+                    fullText += event.text;
+                    aiBubble.innerHTML = toolHtml + fullText;
+                    break;
+                    
+                  case 'done':
+                    addLog('完成', 'content');
+                    aiBubble.innerHTML = toolHtml + fullText;
+                    break;
+                    
+                  case 'error':
+                    addLog('错误: ' + event.text, 'error');
+                    aiBubble.innerHTML = toolHtml + '<span style="color:red">出错: ' + event.text + '</span>';
+                    break;
+                }
+                
+                chat.scrollTop = chat.scrollHeight;
+              } catch (e) {
+                // 兼容旧格式（纯文本）
+                if (jsonStr !== '[DONE]') {
+                  fullText += jsonStr;
+                  aiBubble.innerHTML = toolHtml + fullText;
+                  addLog('内容: ' + jsonStr.substring(0, 50), 'content');
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        addLog('连接失败: ' + err.message, 'error');
+        aiBubble.innerHTML = '<span style="color:red">连接失败: ' + err.message + '</span>';
+      }
+
+      sendBtn.disabled = false;
+      input.focus();
+    }
+  </script>
+</body>
+</html>

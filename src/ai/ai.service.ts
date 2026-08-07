@@ -221,7 +221,7 @@ export class AiService {
         model: this.model,
         messages: messages,
         stream: true, // ← 关键：开启流式
-        stream_options: { include_usage: true },
+        stream_options: { include_usage: true }, //获取token消耗
       });
 
       // 4. 拼接 + 推送
@@ -767,6 +767,7 @@ export class AiService {
       });
 
       aiMessage = response.choices[0].message;
+      console.log(aiMessage);
     }
 
     // 9. 循环结束，返回最终答案
